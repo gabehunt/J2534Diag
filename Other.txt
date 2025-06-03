@@ -1,0 +1,829 @@
+﻿using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Diagnostics;
+using System.Drawing;
+using System.Linq;
+using System.Runtime.Remoting.Channels;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using SAE.J2534;
+
+namespace J2534Diag
+{
+    public partial class FuelTrimForm : Form
+    {
+
+        public struct MSG
+        {
+            public string id;
+            public string data;
+        }
+        private J2534Manager j2534Manager;
+
+        private bool useImperialUnits = true; // Set to true for imperial, false for metric
+        private Dictionary<byte, PidDisplayControl> _pidControls = new Dictionary<byte, PidDisplayControl>();
+        readonly List<ObdPid> ObdPids;
+
+        List<MSG> messages = new List<MSG>();
+        bool print_all = false; // Set to true to capture all messages
+        HashSet<string> monitoredIds = new HashSet<string> { "02-A2", "07-E8" };
+
+        // ISO-TP reassembly state
+        List<byte> isotpBuffer = new List<byte>();
+        int isotpExpectedLength = 0;
+        bool isotpCollecting = false;
+
+        // Track if we've sent the VIN request
+        bool vinReceived = false;
+        DateTime lastFrameTime = DateTime.Now;
+        string partialVin = "";
+        int flowControlRetries = 0;
+        private Thread _monitorThread;
+        private Thread _pollingThread;
+        private CancellationTokenSource _cts;
+        private const int ThrottleBins = 10;
+        private const int RpmBins = 10;
+        private const int cellHeight = 40; // or any value you prefer
+
+        private double?[,] trimGridBank1 = new double?[ThrottleBins, RpmBins];
+        private double?[,] trimGridBank2 = new double?[ThrottleBins, RpmBins];
+
+        private double lastThrottle = 0;
+        private double lastRpm = 0;
+        private double lastStft1 = 0, lastLtft1 = 0;
+        private double lastStft2 = 0, lastLtft2 = 0;
+
+        public FuelTrimForm(J2534Manager j2534Manager)
+        {
+            InitializeComponent();
+
+            SetupGrids();
+
+            ObdPids = ObdPidMap.GetObdPids(useImperialUnits);
+            SetupPidDisplayControls();
+
+            // Start everything after the form is loaded
+            this.Load += Form1_Load;
+            this.FormClosing += Form1_FormClosing;
+            this.j2534Manager = j2534Manager;
+        }
+
+        private void SetupPidDisplayControls()
+        {
+            foreach (var pid in ObdPids)
+            {
+                var pidControl = new PidDisplayControl
+                {
+                    PidName = pid.Name,
+                    Unit = pid.Unit,
+                    IsEnabled = pid.Enabled
+                };
+                pidControl.EnabledChanged += (s, e) => pid.Enabled = pidControl.IsEnabled;
+                flpPids.Controls.Add(pidControl);
+                _pidControls[pid.Pid] = pidControl; // Add this line
+            }
+        }
+
+        private void SetupGrids()
+        {
+            // dgvTrimGridBank1
+            dgvTrimGridBank1.CellFormatting += TrimGrid_CellFormatting;
+            dgvTrimGridBank1.CellPainting += TrimGrid_CellPainting;
+            dgvTrimGridBank1.RowTemplate.Height = cellHeight;
+
+            //dgvTrimGridBank2
+            dgvTrimGridBank2.CellFormatting += TrimGrid_CellFormatting;
+            dgvTrimGridBank2.CellPainting += TrimGrid_CellPainting;
+            dgvTrimGridBank2.RowTemplate.Height = cellHeight;
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            StartApiAndThreads();
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            // Signal threads to stop
+            _cts?.Cancel();
+
+            // Wait for threads to finish
+            _monitorThread?.Join(500);
+            _pollingThread?.Join(500);
+        }
+
+        private void StartApiAndThreads()
+        {
+            _cts = new CancellationTokenSource();
+
+            // Set up filters, etc.
+            MessageFilter passFilter = new MessageFilter()
+            {
+                FilterType = Filter.PASS_FILTER,
+                Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0xF0 },
+                Pattern = new byte[] { 0x00, 0x00, 0x07, 0xE0 },
+                FlowControl = new byte[] { 0x00, 0x00, 0x07, 0xE0 },
+                TxFlags = TxFlag.NONE
+            };
+
+            MessageFilter passFilter2 = new MessageFilter()
+            {
+                FilterType = Filter.PASS_FILTER,
+                Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF },
+                Pattern = new byte[] { 0x00, 0x00, 0x02, 0xA0 },
+                FlowControl = new byte[] { 0x00, 0x00, 0x07, 0xE0 },
+                TxFlags = TxFlag.NONE
+            };
+            j2534Manager.Channel.DefaultTxFlag = TxFlag.NONE;
+            j2534Manager.Channel.StartMsgFilter(passFilter);
+            j2534Manager.Channel.StartMsgFilter(passFilter2);
+
+            //Start background CAN monitor
+            _monitorThread = new Thread(() =>
+            {
+                while (!_cts.IsCancellationRequested && !j2534Manager.Channel.IsDisposed)
+                {
+                    try
+                    {
+                        var resp = j2534Manager?.Channel?.GetMessages(200);
+                        foreach (var msg in resp.Messages)
+                        {
+                            // Process immediately
+                            ParseIsoTpMessage(msg.Data, j2534Manager.Channel);
+
+                            //if (msg.Data.Length >= 5)
+                            //{
+                            //    string id = BitConverter.ToString(msg.Data.Skip(2).Take(2).ToArray());
+                            //    string payload = BitConverter.ToString(msg.Data.Skip(4).ToArray());
+
+                            //    if (print_all && monitoredIds.Contains(id))
+                            //    {
+                            //        Console.WriteLine($"ID: {id}\tData {payload}\n");
+                            //    }
+                            //}
+                            //else
+                            //{
+                            //    Console.WriteLine("Frame: " + BitConverter.ToString(msg.Data));
+                            //}
+                        }
+                    }
+                    catch (TimeoutException)
+                    {
+                        // Continue listening silently
+                    }
+                    catch (AccessViolationException)
+                    {
+                    }
+                    Thread.Sleep(1);
+                }
+            })
+            { IsBackground = true };
+            _monitorThread.Start();
+
+            //Thread.Sleep(100); // Wait for channel to settle
+
+            // 1. Request supported PIDs (0x01–0x20)
+            //var getPids = new byte[]
+            //{
+            //        0x00, 0x00, 0x07, 0xDF, // CAN ID 0x7DF (functional)
+            //        0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+            //};
+            //j2534Manager.Channel.SendMessage(getPids);
+            ////Console.WriteLine("Sent OBD2 Supported PIDs request (0x01-0x20)\n");
+
+            //// Wait for supported PIDs response
+            //Thread.Sleep(500);
+
+            //var controlModuleName = new byte[]
+            //{
+            //        0x00, 0x00, 0x07, 0xDF, // CAN ID 0x7DF (functional)
+            //        0x02, 0x09, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00
+            //};
+            //j2534Manager.Channel.SendMessage(controlModuleName);
+            //Console.WriteLine("Sent controlModuleName request \n");
+
+            // Wait for supported PIDs response
+            //            Thread.Sleep(500);
+
+            //            var calibrationIds = new byte[]
+            //{
+            //    0x00, 0x00, 0x07, 0xDF, // CAN ID 0x7DF (functional)
+            //    0x02, 0x09, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00
+            //};
+            //            j2534Manager.Channel.SendMessage(calibrationIds);
+            //            //Console.WriteLine("Sent Calibration Identifiers request\n");
+            //            Thread.Sleep(500);
+
+            //            var calibrationVerificationNumbers = new byte[]
+            //{
+            //    0x00, 0x00, 0x07, 0xDF, // CAN ID 0x7DF (functional)
+            //    0x02, 0x09, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00
+            //};
+            //            j2534Manager.Channel.SendMessage(calibrationVerificationNumbers);
+            //            //Console.WriteLine("Sent Calibration Verification Numbers request\n");
+            //            Thread.Sleep(500);
+
+
+            //var vinRequest = new byte[]
+            //{
+            //        0x00, 0x00, 0x07, 0xE0, // Try physical addressing (direct to ECM)
+            //        0x02, 0x09, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00
+            //};
+            //j2534Manager.Channel.SendMessage(vinRequest);
+            ////Console.WriteLine("Sent OBD2 VIN request (Mode 09 PID 02) to ECM\n");
+            //Thread.Sleep(500);
+
+            // Start polling thread
+            _pollingThread = new Thread(() =>
+            {
+                while (!_cts.IsCancellationRequested)
+                {
+                    foreach (var pid in ObdPids.Where(p => p.Enabled))
+                    {
+                        var request = BuildObdPidRequest(pid);
+                        j2534Manager.Channel.SendMessage(request);
+                        Thread.Sleep(2);
+                    }
+                    Thread.Sleep(4);
+                }
+            })
+            { IsBackground = true };
+            _pollingThread.Start();
+        }
+
+        void ParseIsoTpMessage(byte[] data, Channel channel)
+        {
+            if (data == null || data.Length < 5) return; // 4 bytes CAN ID + at least 1 byte payload
+
+            //if (print_all)
+            //{
+            //    Console.WriteLine(BitConverter.ToString(data));
+            //}
+
+            // Only process messages from known UDS/OBD2 response IDs
+            uint canId = (uint)(data[0] << 24 | data[1] << 16 | data[2] << 8 | data[3]);
+            if (canId != 0x07E8 && canId != 0x07E0 && canId != 0x07DF)
+                return;
+
+            var payload = data.Skip(4).ToArray();
+            if (payload.Length == 0) return;
+
+            byte pci = payload[0];
+            int frameType = (pci & 0xF0) >> 4;
+
+            // Update timestamp for ISO-TP timeout detection
+            lastFrameTime = DateTime.Now;
+
+            switch (frameType)
+            {
+                case 0x0: // Single Frame
+                    {
+                        int sfLen = pci & 0x0F;
+                        if (payload.Length >= 1 + sfLen)
+                        {
+                            var msg = payload.Skip(1).Take(sfLen).ToArray();
+                            //Console.WriteLine($"Single Frame: {BitConverter.ToString(msg)} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                            //TryPrintSupportedPIDs(msg, channel);
+                            //TryPrintVinFromPayload(msg, isotpComplete: true);
+                            //TryPrintControlModuleNameFromPayload(msg, isotpComplete: true);
+                            //TryPrintCalibrationIdsFromPayload(msg, isotpComplete: true);
+                            //TryPrintCalibrationVerificationNumbersFromPayload(msg, isotpComplete: true);
+                            TryPrintObdPidValue(msg);
+                        }
+                        //else
+                        //Console.WriteLine("Single Frame: Payload too short");
+                        break;
+                    }
+                case 0x1: // First Frame
+                    {
+                        if (payload.Length >= 2)
+                        {
+                            var responseCanId = data.Take(4).ToArray();
+
+                            isotpExpectedLength = ((pci & 0x0F) << 8) + payload[1];
+                            isotpBuffer.Clear();
+                            isotpBuffer.AddRange(payload.Skip(2));
+                            isotpCollecting = true;
+                            flowControlRetries = 0;
+                            //Console.WriteLine($"First Frame, total length: {isotpExpectedLength}, id: {BitConverter.ToString(responseCanId)}, data: {BitConverter.ToString(payload, 2, payload.Length - 2)} (Time: {DateTime.Now:HH:mm:ss.fff})");
+
+                            // Insert a small delay to ensure timing is right for flow control
+                            Thread.Sleep(2);
+
+                            // Always send FC to the sender of the First Frame
+                            SendFlowControl(responseCanId, channel, blockSize: 0, separationTime: 10);
+
+                            // Print partial VIN for debugging
+                            //partialVin = ExtractPartialVin(isotpBuffer.ToArray());
+                            //if (!string.IsNullOrEmpty(partialVin))
+                            //{
+                            //    Console.WriteLine($"VIN (partial): {partialVin} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                            //}
+                        }
+                        else
+                        {
+                            //Console.WriteLine("First Frame: Payload too short");
+                        }
+                        break;
+                    }
+                case 0x2: // Consecutive Frame
+                    {
+                        int seqNum = pci & 0x0F;
+                        if (payload.Length > 1 && isotpCollecting)
+                        {
+                            isotpBuffer.AddRange(payload.Skip(1));
+                            //Console.WriteLine($"Consecutive Frame #{seqNum}, data: {BitConverter.ToString(payload, 1, payload.Length - 1)} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                            //Console.WriteLine($"ISO-TP buffer length: {isotpBuffer.Count}/{isotpExpectedLength}");
+
+                            // Print partial VIN for debugging
+                            string newPartialVin = ExtractPartialVin(isotpBuffer.ToArray());
+                            if (!string.IsNullOrEmpty(newPartialVin) && newPartialVin.Length > partialVin.Length)
+                            {
+                                partialVin = newPartialVin;
+                                //Console.WriteLine($"VIN (partial): {partialVin} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                            }
+
+                            if (isotpBuffer.Count >= isotpExpectedLength)
+                            {
+                                isotpCollecting = false;
+                                var msg = isotpBuffer.Take(isotpExpectedLength).ToArray();
+                                //Console.WriteLine($"Reassembled ISO-TP: {BitConverter.ToString(msg)} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                                //TryPrintSupportedPIDs(msg, channel);
+                                //if (TryPrintVinFromPayload(msg, isotpComplete: true))
+                                //{
+                                //    vinReceived = true;
+                                //}
+                                // Add this line:
+                                //TryPrintControlModuleNameFromPayload(msg, isotpComplete: true);
+                                //TryPrintCalibrationIdsFromPayload(msg, isotpComplete: true);
+                                //TryPrintCalibrationVerificationNumbersFromPayload(msg, isotpComplete: true);
+                                TryPrintObdPidValue(msg);
+                            }
+                        }
+                        else
+                        {
+                            //Console.WriteLine($"Consecutive Frame #{seqNum}: No data or not collecting (Time: {DateTime.Now:HH:mm:ss.fff})");
+                        }
+                        break;
+                    }
+                case 0x3: // Flow Control
+                    //Console.WriteLine($"Flow Control Frame (Time: {DateTime.Now:HH:mm:ss.fff})");
+                    break;
+                default:
+                    //Console.WriteLine($"Unknown ISO-TP frame type: {BitConverter.ToString(payload)} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                    break;
+            }
+        }
+
+        void SendFlowControl(byte[] canId, Channel channel, int blockSize = 0, int separationTime = 0)
+        {
+            var fc = new byte[] { 0x00, 0x00, 0x07, 0xE0,
+            0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+            //Array.Copy(canId, 0, fc, 0, 4); // Use provided canId
+            //fc[4] = 0x30; // FC, Continue to send
+            //fc[5] = (byte)blockSize; // Block size
+            //fc[6] = (byte)separationTime; // Separation time
+            //fc[7] = 0x00; // Pad to 8 bytes
+            channel.SendMessage(fc);
+            //Console.WriteLine($"Sent Flow Control: BS={blockSize}, ST={separationTime}, CanID={BitConverter.ToString(canId)}, Data={BitConverter.ToString(fc)} (Time: {DateTime.Now:HH:mm:ss.fff})");
+        }
+
+        void TryPrintSupportedPIDs(byte[] payload, Channel channel)
+        {
+            // OBD2 Supported PIDs response: 41 00 XX XX XX XX
+            if (payload.Length >= 6 && payload[0] == 0x41 && payload[1] == 0x00)
+            {
+                var supported = new List<string>();
+                for (int i = 0; i < 32; i++)
+                {
+                    int byteIndex = 2 + (i / 8);
+                    int bitIndex = 7 - (i % 8);
+                    if ((payload[byteIndex] & (1 << bitIndex)) != 0)
+                    {
+                        supported.Add($"0x{(i + 1):X2}");
+                    }
+                }
+                Console.WriteLine($"Supported PIDs 0x01-0x20: {string.Join(", ", supported)}\n");
+            }
+        }
+
+        bool TryPrintVinFromPayload(byte[] payload, bool isotpComplete)
+        {
+            // OBD2 Mode 09 PID 02: 49 02 01 <VIN...>
+            // UDS 0x22 F190: 62 F1 90 <VIN...>
+            if (payload.Length >= 4 && payload[0] == 0x49 && payload[1] == 0x02)
+            {
+                // OBD2: skip 49 02 01, VIN is next 17 bytes (may be split across multiple frames)
+                int vinStart = 3;
+                int vinLen = Math.Min(17, payload.Length - vinStart);
+                if (vinLen > 0)
+                {
+                    string vin = System.Text.Encoding.ASCII.GetString(payload, vinStart, vinLen);
+                    if (isotpComplete && vinLen == 17)
+                    {
+                        Console.WriteLine($"VIN: {vin} (Time: {DateTime.Now:HH:mm:ss.fff})\n");
+                        return true;
+                    }
+                    else if (isotpComplete)
+                    {
+                        Console.WriteLine($"VIN (incomplete but final): {vin} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                        return true;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"VIN (partial): {vin} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                    }
+                }
+            }
+            else if (payload.Length >= 4 && payload[0] == 0x62 && payload[1] == 0xF1 && payload[2] == 0x90)
+            {
+                // UDS: skip 62 F1 90, VIN is next 17 bytes
+                int vinStart = 3;
+                int vinLen = Math.Min(17, payload.Length - vinStart);
+                if (vinLen > 0)
+                {
+                    string vin = System.Text.Encoding.ASCII.GetString(payload, vinStart, vinLen);
+                    Console.WriteLine($"VIN: {vin} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        string ExtractPartialVin(byte[] payload)
+        {
+            // Handle OBD2 VIN
+            if (payload.Length >= 2 && payload[0] == 0x49 && payload[1] == 0x02)
+            {
+                int vinStart = 3;
+                if (payload.Length > vinStart)
+                {
+                    int vinLen = Math.Min(17, payload.Length - vinStart);
+                    if (vinLen > 0)
+                    {
+                        return System.Text.Encoding.ASCII.GetString(payload, vinStart, vinLen);
+                    }
+                }
+            }
+            // Handle UDS VIN
+            else if (payload.Length >= 3 && payload[0] == 0x62 && payload[1] == 0xF1 && payload[2] == 0x90)
+            {
+                int vinStart = 3;
+                if (payload.Length > vinStart)
+                {
+                    int vinLen = Math.Min(17, payload.Length - vinStart);
+                    if (vinLen > 0)
+                    {
+                        return System.Text.Encoding.ASCII.GetString(payload, vinStart, vinLen);
+                    }
+                }
+            }
+            return string.Empty;
+        }
+        bool TryPrintControlModuleNameFromPayload(byte[] payload, bool isotpComplete)
+        {
+            // OBD2 Mode 09 PID 0A: 49 0A 01 <ASCII module name...>
+            if (payload.Length >= 4 && payload[0] == 0x49 && payload[1] == 0x0A)
+            {
+                int nameStart = 3;
+                int nameLen = payload.Length - nameStart;
+                if (nameLen > 0)
+                {
+                    // Remove trailing 0x00 and 0xAA
+                    int actualLen = nameLen;
+                    while (actualLen > 0 && (payload[nameStart + actualLen - 1] == 0x00 || payload[nameStart + actualLen - 1] == 0xAA))
+                        actualLen--;
+
+                    string moduleName = System.Text.Encoding.ASCII.GetString(payload, nameStart, actualLen);
+                    if (isotpComplete)
+                    {
+                        Console.WriteLine($"Control Module Name: {moduleName} (Time: {DateTime.Now:HH:mm:ss.fff})\n");
+                        return true;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Control Module Name (partial): {moduleName} (Time: {DateTime.Now:HH:mm:ss.fff})\n");
+                    }
+                }
+            }
+            return false;
+        }
+        bool TryPrintCalibrationIdsFromPayload(byte[] payload, bool isotpComplete)
+        {
+            // OBD2 Mode 09 PID 04: 49 04 01 <ASCII calibration ID(s)...>
+            if (payload.Length >= 4 && payload[0] == 0x49 && payload[1] == 0x04)
+            {
+                int calIdStart = 3;
+                int calIdLen = payload.Length - calIdStart;
+                if (calIdLen > 0)
+                {
+                    var calIds = new List<string>();
+                    for (int i = 0; i < calIdLen; i += 8)
+                    {
+                        int len = Math.Min(8, calIdLen - i);
+                        // Remove trailing 0x00 and 0xAA from each ID
+                        int actualLen = len;
+                        while (actualLen > 0 && (payload[calIdStart + i + actualLen - 1] == 0x00 || payload[calIdStart + i + actualLen - 1] == 0xAA))
+
+                            actualLen--;
+                        if (actualLen > 0)
+                        {
+                            string calId = System.Text.Encoding.ASCII.GetString(payload, calIdStart + i, actualLen);
+                            calIds.Add(calId);
+                        }
+                    }
+                    if (isotpComplete)
+                    {
+                        Console.WriteLine($"Calibration Identifiers: {string.Join(" ", calIds)} (Time: {DateTime.Now:HH:mm:ss.fff})\n");
+                        return true;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Calibration Identifiers (partial): {string.Join(" ", calIds)} (Time: {DateTime.Now:HH:mm:ss.fff})\n");
+                    }
+                }
+            }
+            return false;
+        }
+        bool TryPrintCalibrationVerificationNumbersFromPayload(byte[] payload, bool isotpComplete)
+        {
+            // OBD2 Mode 09 PID 06: 49 06 01 <CVN1> <CVN2> ...
+            if (payload.Length >= 4 && payload[0] == 0x49 && payload[1] == 0x06)
+            {
+                int cvnStart = 3;
+                int cvnLen = payload.Length - cvnStart;
+                if (cvnLen > 0)
+                {
+                    var cvns = new List<string>();
+                    for (int i = 0; i + 4 <= cvnLen; i += 4)
+                    {
+                        uint cvn = (uint)(payload[cvnStart + i] << 24 |
+                                          payload[cvnStart + i + 1] << 16 |
+                                          payload[cvnStart + i + 2] << 8 |
+                                          payload[cvnStart + i + 3]);
+                        cvns.Add(cvn.ToString("X8")); // Print as 8-digit hex
+                    }
+                    if (isotpComplete)
+                    {
+                        Console.WriteLine($"Calibration Verification Numbers: {string.Join(" ", cvns)} (Time: {DateTime.Now:HH:mm:ss.fff})\n");
+                        return true;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Calibration Verification Numbers (partial): {string.Join(" ", cvns)} (Time: {DateTime.Now:HH:mm:ss.fff})\n");
+                    }
+                }
+            }
+            return false;
+        }
+
+        //void TryPrintEngineRpmFromPayload(byte[] payload)
+        //{
+        //    // OBD2 Mode 01 PID 0C: 41 0C A B
+        //    if (payload.Length >= 4 && payload[0] == 0x41 && payload[1] == 0x0C)
+        //    {
+        //        byte A = payload[2];
+        //        byte B = payload[3];
+        //        int rpm = ((A << 8) | B) / 4;
+        //        Console.WriteLine($"Engine RPM: {rpm} (Time: {DateTime.Now:HH:mm:ss.fff})\n");
+        //    }
+        //}
+        private void TryPrintObdPidValue(byte[] payload)
+        {
+            if (payload.Length < 2) return;
+            if (payload[0] != 0x41) return; // Only Mode 01 responses
+
+            byte pid = payload[1];
+            var pidDef = ObdPids.FirstOrDefault(p => p.Pid == pid);
+            if (pidDef != null)
+            {
+                var data = payload.Skip(2).ToArray();
+                double value = pidDef.Formula(data);
+                UpdatePidDisplay(pid, value, pidDef.Unit);
+
+                switch (pid)
+                {
+                    case 0x11: // Throttle Position
+                        lastThrottle = value;
+                        break;
+                    case 0x0C: // Engine RPM
+                        lastRpm = value;
+                        break;
+                    case 0x06: // STFT Bank 1
+                        lastStft1 = value;
+                        break;
+                    case 0x07: // LTFT Bank 1
+                        lastLtft1 = value;
+                        break;
+                    case 0x08: // STFT Bank 2
+                        lastStft2 = value;
+                        break;
+                    case 0x09: // LTFT Bank 2
+                        lastLtft2 = value;
+                        break;
+                }
+
+                // Update Bank 1 grid
+                if (lastThrottle >= 0 && lastRpm >= 0)
+                {
+                    int tBin = Math.Min((int)(lastThrottle / 10.0), ThrottleBins - 1);
+                    int rBin = Math.Min((int)(lastRpm / 500.0), RpmBins - 1);
+
+                    double totalTrim1 = lastStft1 + lastLtft1;
+                    trimGridBank1[tBin, rBin] = totalTrim1;
+
+                    double totalTrim2 = lastStft2 + lastLtft2;
+                    trimGridBank2[tBin, rBin] = totalTrim2;
+
+                    UpdateTrimGridDisplay();
+                }
+            }
+        }
+
+        byte[] BuildObdPidRequest(ObdPid pid)
+        {
+            // 4 bytes ArbId, 1 byte Sid, 1 byte Mode, 1 byte Pid, pad with 0x00 to 12 bytes
+            var request = new byte[12];
+            Array.Copy(pid.ArbId, 0, request, 0, 4);
+            request[4] = pid.Sid;
+            request[5] = pid.Mode;
+            request[6] = pid.Pid;
+            // The rest (request[7]..request[11]) are already 0x00 by default
+            return request;
+        }
+        byte[] BuildObdPidBatchRequest(byte[] arbId, byte sid, byte mode, List<byte> pids)
+        {
+            var request = new byte[12];
+            Array.Copy(arbId, 0, request, 0, 4);
+            request[4] = sid;
+            request[5] = mode;
+            for (int i = 0; i < pids.Count && i < 6; i++)
+                request[6 + i] = pids[i];
+            // The rest is already 0x00
+            return request;
+        }
+        private void UpdatePidDisplay(byte pid, double value, string unit)
+        {
+            if (_pidControls.TryGetValue(pid, out var control))
+            {
+                if (control.InvokeRequired)
+                {
+                    control.Invoke(new Action(() => control.ValueText = value.ToString()));
+
+                }
+            }
+            else
+            {
+                control.ValueText = value.ToString();
+            }
+            Debug.WriteLine($"PID {pid:X2} Value: {value} {unit} (Time: {DateTime.Now:HH:mm:ss.fff})");
+        }
+        private void UpdateTrimGridDisplay()
+        {
+            UpdateSingleTrimGridDisplay(dgvTrimGridBank1, trimGridBank1, "Bank 1");
+            UpdateSingleTrimGridDisplay(dgvTrimGridBank2, trimGridBank2, "Bank 2");
+        }
+
+        private void UpdateSingleTrimGridDisplay(DataGridView dgv, double?[,] grid, string bankLabel)
+        {
+            if (dgv.InvokeRequired)
+            {
+                dgv.Invoke(new Action(() => UpdateSingleTrimGridDisplay(dgv, grid, bankLabel)));
+                return;
+            }
+
+            dgv.SuspendLayout();
+
+            int cellHeight = 40;
+            int cellWidth = (int)(cellHeight);
+
+            // Setup columns if not already done
+            if (dgv.ColumnCount != RpmBins)
+            {
+                dgv.Columns.Clear();
+                for (int r = 0; r < RpmBins; r++)
+                {
+                    int rpmStart = r * 500;
+                    int rpmEnd = (r + 1) * 500;
+                    dgv.Columns.Add($"rpm{r}", $"{rpmStart}");
+                    dgv.Columns[r].Width = cellWidth;
+                }
+            }
+
+            // Setup rows if not already done
+            if (dgv.RowCount != ThrottleBins)
+            {
+                dgv.Rows.Clear();
+                for (int t = 0; t < ThrottleBins; t++)
+                {
+                    int binIdx = ThrottleBins - 1 - t; // Flip: 0=100%, 9=0%
+                    int tpStart = binIdx * 10;
+                    int tpEnd = (binIdx + 1) * 10;
+                    dgv.Rows.Add();
+                    dgv.Rows[t].HeaderCell.Value = $"{tpStart}%";
+                }
+            }
+
+            dgv.RowTemplate.Height = cellHeight;
+
+            // Fill grid (flip Y)
+            for (int t = 0; t < ThrottleBins; t++)
+            {
+                int binIdx = ThrottleBins - 1 - t; // Flip: 0=100%, 9=0%
+                for (int r = 0; r < RpmBins; r++)
+                {
+                    double? dbl = grid[binIdx, r];
+                    int? val = dbl.HasValue ? (int?)dbl : null;
+
+                    if (val.HasValue && val < -99) val = -99;
+                    if (val.HasValue && val > 99) val = 99;
+
+                    dgv.Rows[t].Cells[r].Value = $"{val}";
+                    ;
+                }
+            }
+
+            dgv.ResumeLayout();
+        }
+        private void TrimGrid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+        {
+            var dgv = sender as DataGridView;
+            if (dgv == null) return;
+
+            // Only color data cells, not headers
+            if (e.RowIndex < 0 || e.ColumnIndex < 0)
+                return;
+
+            var value = dgv.Rows[e.RowIndex].Cells[e.ColumnIndex].Value;
+            if (value == null || string.IsNullOrWhiteSpace(value.ToString()))
+                return;
+
+            if (double.TryParse(value.ToString(), out double trim))
+            {
+                // Good: -5% to +5% (green)
+                if (trim >= -8 && trim <= 8)
+                {
+                    e.CellStyle.BackColor = Color.FromArgb(60, 200, 60); // Green
+                    e.CellStyle.ForeColor = Color.Black;
+                }
+                // Marginal: -10% to -5% or 5% to 10% (yellow)
+                else if ((trim >= -13 && trim < -8) || (trim > 8 && trim <= 13))
+                {
+                    e.CellStyle.BackColor = Color.FromArgb(255, 220, 60); // Yellow
+                    e.CellStyle.ForeColor = Color.Black;
+                }
+                // Bad: < -10% or > 10% (red)
+                else
+                {
+                    e.CellStyle.BackColor = Color.FromArgb(220, 60, 60); // Red
+                    e.CellStyle.ForeColor = Color.White;
+                }
+            }
+        }
+
+        private void TrimGrid_CellPainting(object sender, DataGridViewCellPaintingEventArgs e)
+        {
+            var dgv = sender as DataGridView;
+            if (dgv == null) return;
+
+            // Only paint data cells, not headers
+            if (e.RowIndex < 0 || e.ColumnIndex < 0)
+                return;
+
+            // Paint everything as normal
+            e.Paint(e.ClipBounds, DataGridViewPaintParts.All & ~DataGridViewPaintParts.Focus);
+
+            // If this cell is selected, draw a blue border
+            if (dgv.CurrentCell != null && e.RowIndex == dgv.CurrentCell.RowIndex && e.ColumnIndex == dgv.CurrentCell.ColumnIndex)
+            {
+                dgv.CurrentCell.Selected = false;
+                dgv.CurrentCell.Style.SelectionBackColor = Color.FromArgb(0, 10, 10, 10);
+            }
+
+            e.Handled = true;
+        }
+        public void StartListening()
+        {
+            if (_monitorThread == null || !_monitorThread.IsAlive)
+            {
+                _cts = new CancellationTokenSource();
+                StartApiAndThreads();
+            }
+        }
+
+        public void StopListening()
+        {
+            _cts?.Cancel();
+            _monitorThread?.Join(500);
+            _pollingThread?.Join(500);
+            _monitorThread = null;
+            _pollingThread = null;
+            j2534Manager.Channel.ClearTxBuffer();
+            j2534Manager.Channel.ClearRxBuffer();
+        }
+    }
+}
