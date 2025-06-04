@@ -19,16 +19,16 @@ namespace J2534Diag
                     Enabled = true
                 },
 
-                new ObdPid {
-                    ArbId = new byte[] { 0x00, 0x00, 0x07, 0xDF },
-                    Sid = 0x02,
-                    Mode = 0x01,
-                    Pid = 0x0D,
-                    Name = "Vehicle Speed",
-                    Unit = useImperialUnits ? "mph" : "km/h",
-                    Formula = data => useImperialUnits ? data[0] * 0.621371 : data[0],
-                    Enabled = false
-                },          
+                //new ObdPid {
+                //    ArbId = new byte[] { 0x00, 0x00, 0x07, 0xDF },
+                //    Sid = 0x02,
+                //    Mode = 0x01,
+                //    Pid = 0x0D,
+                //    Name = "Vehicle Speed",
+                //    Unit = useImperialUnits ? "mph" : "km/h",
+                //    Formula = data => useImperialUnits ? data[0] * 0.621371 : data[0],
+                //    Enabled = false
+                //},          
                 new ObdPid {
                     ArbId = new byte[] { 0x00, 0x00, 0x07, 0xDF },
                     Sid = 0x02,
@@ -79,16 +79,16 @@ namespace J2534Diag
                     Formula = data => data[0] * 100.0 / 255.0,
                     Enabled = true
                 },
-                new ObdPid {
-                    ArbId = new byte[] { 0x00, 0x00, 0x07, 0xDF },
-                    Sid = 0x02,
-                    Mode = 0x01,
-                    Pid = 0x05,
-                    Name = "Coolant Temp",
-                    Unit = useImperialUnits ? "°F" : "°C",
-                    Formula = data => useImperialUnits ? ((data[0] - 40) * 9.0 / 5.0) + 32 : data[0] - 40,
-                    Enabled = false
-                },
+                //new ObdPid {
+                //    ArbId = new byte[] { 0x00, 0x00, 0x07, 0xDF },
+                //    Sid = 0x02,
+                //    Mode = 0x01,
+                //    Pid = 0x05,
+                //    Name = "Coolant Temp",
+                //    Unit = useImperialUnits ? "°F" : "°C",
+                //    Formula = data => useImperialUnits ? ((data[0] - 40) * 9.0 / 5.0) + 32 : data[0] - 40,
+                //    Enabled = false
+                //},
             };
         }
     }

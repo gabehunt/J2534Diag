@@ -36,8 +36,8 @@ namespace J2534Diag
             this.tabVehicle = new System.Windows.Forms.TabPage();
             this.tabFuelTrim = new System.Windows.Forms.TabPage();
             this.tabCanListener = new System.Windows.Forms.TabPage();
-            this.selectedVehicleControl = new J2534Diag.SelectedVehicleControl();
             this.tabMisfireMonitor = new System.Windows.Forms.TabPage();
+            this.selectedVehicleControl = new J2534Diag.SelectedVehicleControl();
             this.mainLayoutPanel.SuspendLayout();
             this.tabControl1.SuspendLayout();
             this.SuspendLayout();
@@ -53,8 +53,8 @@ namespace J2534Diag
             this.mainLayoutPanel.Name = "mainLayoutPanel";
             this.mainLayoutPanel.RowCount = 2;
             this.mainLayoutPanel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.mainLayoutPanel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 40F));
-            this.mainLayoutPanel.Size = new System.Drawing.Size(800, 562);
+            this.mainLayoutPanel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 22F));
+            this.mainLayoutPanel.Size = new System.Drawing.Size(1008, 729);
             this.mainLayoutPanel.TabIndex = 0;
             // 
             // tabControl1
@@ -67,7 +67,7 @@ namespace J2534Diag
             this.tabControl1.Location = new System.Drawing.Point(3, 3);
             this.tabControl1.Name = "tabControl1";
             this.tabControl1.SelectedIndex = 0;
-            this.tabControl1.Size = new System.Drawing.Size(794, 516);
+            this.tabControl1.Size = new System.Drawing.Size(1002, 701);
             this.tabControl1.TabIndex = 0;
             this.tabControl1.SelectedIndexChanged += new System.EventHandler(this.tabControl1_SelectedIndexChanged);
             // 
@@ -75,7 +75,7 @@ namespace J2534Diag
             // 
             this.tabVehicle.Location = new System.Drawing.Point(4, 22);
             this.tabVehicle.Name = "tabVehicle";
-            this.tabVehicle.Size = new System.Drawing.Size(786, 490);
+            this.tabVehicle.Size = new System.Drawing.Size(994, 675);
             this.tabVehicle.TabIndex = 0;
             this.tabVehicle.Text = "Vehicle";
             // 
@@ -99,13 +99,6 @@ namespace J2534Diag
             this.tabCanListener.Text = "CAN Listener";
             this.tabCanListener.UseVisualStyleBackColor = true;
             // 
-            // selectedVehicleControl
-            // 
-            this.selectedVehicleControl.Location = new System.Drawing.Point(3, 525);
-            this.selectedVehicleControl.Name = "selectedVehicleControl";
-            this.selectedVehicleControl.Size = new System.Drawing.Size(794, 34);
-            this.selectedVehicleControl.TabIndex = 1;
-            // 
             // tabMisfireMonitor
             // 
             this.tabMisfireMonitor.Location = new System.Drawing.Point(4, 22);
@@ -115,11 +108,18 @@ namespace J2534Diag
             this.tabMisfireMonitor.Text = "Misfire Monitor";
             this.tabMisfireMonitor.UseVisualStyleBackColor = true;
             // 
+            // selectedVehicleControl
+            // 
+            this.selectedVehicleControl.Location = new System.Drawing.Point(3, 710);
+            this.selectedVehicleControl.Name = "selectedVehicleControl";
+            this.selectedVehicleControl.Size = new System.Drawing.Size(794, 16);
+            this.selectedVehicleControl.TabIndex = 1;
+            // 
             // MainForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(800, 562);
+            this.ClientSize = new System.Drawing.Size(1008, 729);
             this.Controls.Add(this.mainLayoutPanel);
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.Name = "MainForm";

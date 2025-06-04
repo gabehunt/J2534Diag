@@ -335,7 +335,7 @@ namespace J2534Diag
                 _isListening = false;
                 _processingActive = false;
                 _listenThread?.Join(500);
-                _processingThread?.Join();
+                _processingThread?.Join(500);
             }
             catch (Exception ex)
             {
