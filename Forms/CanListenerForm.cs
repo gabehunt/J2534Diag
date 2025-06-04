@@ -13,7 +13,7 @@ namespace J2534Diag
 {
     public partial class CanListenerForm : Form
     {
-        private const int MAX_RECORDS = 30000;
+        private const int MAX_RECORDS = 10000;
         private Thread _listenThread;
         private CancellationTokenSource _cts;
         private J2534Manager j2534Manager;
@@ -147,7 +147,7 @@ namespace J2534Diag
                 try
                 {
                     var newMessages = new List<CanMessage>();
-                    int batchSize = 100;
+                    int batchSize = 200;
                     int count = 0;
                     int allMessagesCount = _allMessages.Count; //aprox count is fine no need to lock
                     var mylist = new List<byte[]>();
@@ -321,7 +321,7 @@ namespace J2534Diag
             try
             {
                 if (!_isListening) return;
-                if (j2534Manager.Channel == null && !j2534Manager.Channel.IsDisposed)
+                if (j2534Manager.Channel != null && !j2534Manager.Channel.IsDisposed)
                 {
                     j2534Manager.Channel.ClearMsgFilters();
                     j2534Manager.Channel.ClearTxBuffer();
@@ -332,12 +332,12 @@ namespace J2534Diag
             try
             {
                 _cts?.Cancel();
-                _listenThread?.Join(500);
                 _isListening = false;
                 _processingActive = false;
+                _listenThread?.Join(500);
                 _processingThread?.Join();
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 Debug.WriteLine(ex.ToString());
             }
