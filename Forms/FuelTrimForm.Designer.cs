@@ -8,8 +8,8 @@ namespace J2534Diag
     {
         private System.ComponentModel.IContainer components = null;
         private TableLayoutPanel tlpMain;
-        private Panel pnlStaticInfo;
         private FlowLayoutPanel flpPids;
+        private FlowLayoutPanel flpActions;
         private Panel pnlBottom;
         private TableLayoutPanel tlpRight;
         private Panel pnlGrids;
@@ -33,7 +33,6 @@ namespace J2534Diag
         {
             this.components = new System.ComponentModel.Container();
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(1200, 800);
             this.Text = "J2534 OBD-II Scan Tool";
 
             // Main TableLayoutPanel
@@ -41,15 +40,9 @@ namespace J2534Diag
             this.tlpMain.ColumnCount = 2;
             this.tlpMain.RowCount = 2;
             this.tlpMain.Dock = DockStyle.Fill;
-            this.tlpMain.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250F)); // Left panel width
             this.tlpMain.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));  // Right panel fills rest
             this.tlpMain.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));        // Main area
-            this.tlpMain.RowStyles.Add(new RowStyle(SizeType.Absolute, 60F));        // Bottom panel height
-
-            // Static Info Panel (top left)
-            this.pnlStaticInfo = new Panel();
-            this.pnlStaticInfo.Dock = DockStyle.Top;
-            this.pnlStaticInfo.Height = 80;
+            this.tlpMain.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));        // Bottom panel height
 
             // PID Panel (right, top)
             this.flpPids = new FlowLayoutPanel();
@@ -66,11 +59,20 @@ namespace J2534Diag
             this.pnlGrids.Dock = DockStyle.Fill;
             this.pnlGrids.AutoScroll = true;
 
+            this.lblBank1 = new Label
+            {
+                Text = "Fuel Trim Grid - Bank 1",
+                Location = new Point(0, 0),
+                AutoSize = true,
+                ForeColor = Color.Blue,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold)
+            };
+
             // --- Add DataGridView for Bank 1 ---
             this.dgvTrimGridBank1 = new DataGridView
             {
                 Name = "dgvTrimGridBank1",
-                Location = new Point(10, 40),
+                Location = new Point(0, 20),
                 Size = new Size(482, 421),
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
@@ -90,12 +92,13 @@ namespace J2534Diag
             this.dgvTrimGridBank1.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(40, 40, 60);
             this.dgvTrimGridBank1.ColumnHeadersDefaultCellStyle.ForeColor = Color.Cyan;
 
-            this.lblBank1 = new Label
+
+            this.lblBank2 = new Label
             {
-                Text = "Fuel Trim Grid - Bank 1",
-                Location = new Point(10, 10),
+                Text = "Fuel Trim Grid - Bank 2",
+                Location = new Point(492, 0),
                 AutoSize = true,
-                ForeColor = Color.Cyan,
+                ForeColor = Color.Orange,
                 Font = new Font("Segoe UI", 10F, FontStyle.Bold)
             };
 
@@ -103,7 +106,7 @@ namespace J2534Diag
             this.dgvTrimGridBank2 = new DataGridView
             {
                 Name = "dgvTrimGridBank2",
-                Location = new Point(520, 40),
+                Location = new Point(492, 20),
                 Size = new Size(482, 421),
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
@@ -123,14 +126,20 @@ namespace J2534Diag
             this.dgvTrimGridBank2.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(40, 40, 60);
             this.dgvTrimGridBank2.ColumnHeadersDefaultCellStyle.ForeColor = Color.Orange;
 
-            this.lblBank2 = new Label
-            {
-                Text = "Fuel Trim Grid - Bank 2",
-                Location = new Point(10, 310),
-                AutoSize = true,
-                ForeColor = Color.Orange,
-                Font = new Font("Segoe UI", 10F, FontStyle.Bold)
-            };
+            // Add a FlowLayoutPanel for action buttons in pnlBottom
+            flpActions = new FlowLayoutPanel();
+            flpActions.Dock = DockStyle.Fill; // Or DockStyle.Fill for center/left alignment
+            flpActions.AutoSize = true;
+            flpActions.FlowDirection = FlowDirection.LeftToRight;
+            //flpActions.Padding = new Padding(10, 10, 10, 10);
+
+            // Add the Clear Fuel Trims button
+            var btnClearFuelTrims = new Button();
+            btnClearFuelTrims.Name = "btnClearFuelTrims";
+            btnClearFuelTrims.Text = "Clear Charts";
+            btnClearFuelTrims.AutoSize = true;
+            btnClearFuelTrims.Click += btnClearFuelTrims_Click;
+            flpActions.Controls.Add(btnClearFuelTrims);
 
             // Add grids and labels to pnlGrids
             this.pnlGrids.Controls.Add(this.lblBank1);
@@ -143,34 +152,15 @@ namespace J2534Diag
             this.tlpRight.ColumnCount = 1;
             this.tlpRight.RowCount = 2;
             this.tlpRight.Dock = DockStyle.Fill;
-            this.tlpRight.RowStyles.Add(new RowStyle(SizeType.Absolute, 180F)); // Height for PID controls
+            this.tlpRight.RowStyles.Add(new RowStyle(SizeType.Absolute, 140F)); // Height for PID controls
+            this.tlpRight.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F)); // Height for PID controls
             this.tlpRight.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));  // Grids fill the rest
             this.tlpRight.Controls.Add(this.flpPids, 0, 0);
-            this.tlpRight.Controls.Add(this.pnlGrids, 0, 1);
+            this.tlpRight.Controls.Add(this.flpActions, 0, 1);
+            this.tlpRight.Controls.Add(this.pnlGrids, 0, 2);
 
             // Add panels to TableLayoutPanel
-            this.tlpMain.Controls.Add(this.pnlStaticInfo, 0, 0);
-            this.tlpMain.Controls.Add(this.tlpRight, 1, 0);
-            this.tlpMain.Controls.Add(this.pnlBottom, 0, 1);
-            this.tlpMain.SetColumnSpan(this.pnlBottom, 2);
-
-            // Add a FlowLayoutPanel for action buttons in pnlBottom
-            var flpActions = new FlowLayoutPanel();
-            flpActions.Dock = DockStyle.Right; // Or DockStyle.Fill for center/left alignment
-            flpActions.AutoSize = true;
-            flpActions.FlowDirection = FlowDirection.LeftToRight;
-            flpActions.Padding = new Padding(10, 10, 10, 10);
-
-            // Add the Clear Fuel Trims button
-            var btnClearFuelTrims = new Button();
-            btnClearFuelTrims.Name = "btnClearFuelTrims";
-            btnClearFuelTrims.Text = "Clear Charts";
-            btnClearFuelTrims.AutoSize = true;
-            btnClearFuelTrims.Click += btnClearFuelTrims_Click;
-            flpActions.Controls.Add(btnClearFuelTrims);
-
-            // Add the FlowLayoutPanel to pnlBottom
-            this.pnlBottom.Controls.Add(flpActions);
+            this.tlpMain.Controls.Add(this.tlpRight, 0, 0);
 
             // Add TableLayoutPanel to Form
             this.Controls.Add(this.tlpMain);

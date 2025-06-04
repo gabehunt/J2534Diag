@@ -62,6 +62,7 @@ namespace J2534Diag
 
             ObdPids = ObdPidMap.GetObdPids(useImperialUnits);
             SetupPidDisplayControls();
+            UpdateTrimGridDisplay();
 
             // Start everything after the form is loaded
             this.Load += Form1_Load;
@@ -114,7 +115,9 @@ namespace J2534Diag
 
         private void btnClearFuelTrims_Click(object sender, EventArgs e)
         {
-
+            trimGridBank1 = new double?[ThrottleBins, RpmBins];
+            trimGridBank2 = new double?[ThrottleBins, RpmBins];
+            UpdateTrimGridDisplay();
             //This attempt wasgetting 7F failure
             //var clearFuelTrims = new byte[12];
             //clearFuelTrims[0] = 0x14;
@@ -586,13 +589,16 @@ namespace J2534Diag
             try
             {
                 _cts?.Cancel();
+                if (j2534Manager.Channel != null && !j2534Manager.Channel.IsDisposed)
+                {
+                    j2534Manager.Channel.ClearMsgFilters();
+                    j2534Manager.Channel.ClearTxBuffer();
+                    j2534Manager.Channel.ClearRxBuffer();
+                }
                 _pollingThread?.Join(500);
                 _monitorThread?.Join(500);
                 _pollingThread = null;
                 _monitorThread = null;
-                if (j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
-                j2534Manager.Channel.ClearTxBuffer();
-                j2534Manager.Channel.ClearRxBuffer();
             }
             catch
             {
