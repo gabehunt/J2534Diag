@@ -41,107 +41,119 @@ namespace J2534Diag
 
         public void Initialize(string dllFileName)
         {
-            for (int i = 0; i < 2; i++)
+            for (int iBitMode = 0; iBitMode < 2; iBitMode++)
             {
-                if (i == 1)
+                if (iBitMode == 1)
                 {
                     BitMode = BitType.BITS_29; // Switch to 29-bit mode for second device
                 }
 
-                if (Channel != null) { try { Channel.Dispose(); } catch { } }
-                if (Device != null) { try { Device.Dispose(); } catch { } }
-                if (Api != null) { try { Api.Dispose(); } catch { } }
-                Api = APIFactory.GetAPI(dllFileName);
-                Device = Api.GetDevice();
+                InitializeChannel(dllFileName);
 
-                EcmRxId = BitMode == BitType.BITS_11 ? new byte[] { 0x00, 0x00, 0x07, 0xE0 } : new byte[] { 0x14, 0xDA, 0x11, 0xF1 };
-                Channel = Device.GetChannel(Protocol.CAN, Baud.CAN_500000, BitMode == BitType.BITS_11 ? ConnectFlag.NONE : ConnectFlag.CAN_29BIT_ID);
-
-                MessageFilter passFilter = BitMode == BitType.BITS_11 ? new MessageFilter()
+                if (Vin == null)
                 {
-                    FilterType = Filter.PASS_FILTER,
-                    Mask = new byte[] { 0xF0, 0xFF, 0xFF, 0x00 },
-                    Pattern = new byte[] { 0x00, 0x00, 0x07, 0xD0 },
-                    FlowControl = new byte[] { 0x00, 0x00, 0x07, 0xE0 },
-                    TxFlags = TxFlag.NONE
-                } : new MessageFilter()
-                {
-                    FilterType = Filter.PASS_FILTER,
-                    Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF },
-                    Pattern = new byte[] { 0x14, 0x2A, 0xF1, 0x11 },
-                    FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
-                    TxFlags = TxFlag.CAN_29BIT_ID
-                };
-
-                Channel.DefaultTxFlag = BitMode == BitType.BITS_11 ? TxFlag.NONE : TxFlag.CAN_29BIT_ID;
-
-                Channel.ClearMsgFilters();
-                var filterId = Channel.StartMsgFilter(passFilter);
-
-                _cts = new CancellationTokenSource(3000);
-
-                //Start background CAN monitor
-                _monitorThread = new Thread(() =>
-                {
-                    while (!_cts.IsCancellationRequested && Channel != null && !Channel.IsDisposed)
-                    {
-                        try
-                        {
-                            var resp = Channel?.GetMessages(200, 5);
-                            //Debug.WriteLine($"Received {resp.Messages.Length} messages at {DateTime.Now:HH:mm:ss.fff}");
-                            foreach (var msg in resp.Messages)
-                            {
-                                // Process immediately
-                                _isoTpParser.ProcessMessage(msg.Data);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"Error in Vehicle Tab: {ex.Message}");
-                            //StopListening();
-                        }
-                        Thread.Sleep(1);
-                    }
-                })
-                { IsBackground = true };
-
-                _monitorThread.Start();
-
-                // Send VIN request
-                var vinRequest = new byte[12];
-                if(BitMode == BitType.BITS_11)
-                {
-                    vinRequest[0] = 0x00; // OBD2 Mode 09 PID 02
-                    vinRequest[1] = 0x00; // OBD2 Mode 09 PID 02
-                    vinRequest[2] = 0x07; // PID 02
-                    vinRequest[3] = 0xE0; // VIN request
+                    Debug.WriteLine("VIN not received.");
                 }
-                else
+                else if (Vin.Length == 17)
                 {
-                    vinRequest[0] = 0x14; // UDS Service 22, Sub-function F1 (VIN)
-                    vinRequest[1] = 0xDA; // UDS Service 22, Sub-function F1 (VIN)
-                    vinRequest[2] = 0x11; // Service ID for VIN
-                    vinRequest[3] = 0xF1; // Sub-function for VIN
-                }
-                vinRequest[4] = 0x02;
-                vinRequest[5] = 0x09;
-                vinRequest[6] = 0x02;
-                Channel.SendMessage(vinRequest);
-                Thread.Sleep(1); // Give some time for the request to be sent
-
-                _monitorThread.Join(3000); // Wait for thread to complete
-                Channel.StopMsgFilter(filterId);
-                Channel.ClearMsgFilters();
-                if(Vin != null && Vin.Length > 1)
-                {
-                    Debug.WriteLine($"VIN: {Vin} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                    Debug.WriteLine($"VIN: {Vin} (Time: {DateTime.Now:HH:mm:ss.fff}), trying again.");
                     return;
                 }
                 else
                 {
-                    Debug.WriteLine("VIN not received or incomplete.");
+                    Debug.WriteLine($"VIN Incomplete: {Vin} (Time: {DateTime.Now:HH:mm:ss.fff}), trying again.");
+                    // Only allow 1 retry here
+                    InitializeChannel(dllFileName);
                 }
             }
+        }
+
+        private void InitializeChannel(string dllFileName)
+        {
+            if (Channel != null) { try { Channel.Dispose(); } catch { } }
+            if (Device != null) { try { Device.Dispose(); } catch { } }
+            if (Api != null) { try { Api.Dispose(); } catch { } }
+            Api = APIFactory.GetAPI(dllFileName);
+            Device = Api.GetDevice();
+
+            EcmRxId = BitMode == BitType.BITS_11 ? new byte[] { 0x00, 0x00, 0x07, 0xE0 } : new byte[] { 0x14, 0xDA, 0x11, 0xF1 };
+            Channel = Device.GetChannel(Protocol.CAN, Baud.CAN_500000, BitMode == BitType.BITS_11 ? ConnectFlag.NONE : ConnectFlag.CAN_29BIT_ID);
+
+            MessageFilter passFilter = BitMode == BitType.BITS_11 ? new MessageFilter()
+            {
+                FilterType = Filter.PASS_FILTER,
+                Mask = new byte[] { 0xF0, 0xFF, 0xFF, 0x00 },
+                Pattern = new byte[] { 0x00, 0x00, 0x07, 0xD0 },
+                FlowControl = new byte[] { 0x00, 0x00, 0x07, 0xE0 },
+                TxFlags = TxFlag.NONE
+            } : new MessageFilter()
+            {
+                FilterType = Filter.PASS_FILTER,
+                Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF },
+                Pattern = new byte[] { 0x14, 0x2A, 0xF1, 0x11 },
+                FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
+                TxFlags = TxFlag.CAN_29BIT_ID
+            };
+
+            Channel.DefaultTxFlag = BitMode == BitType.BITS_11 ? TxFlag.NONE : TxFlag.CAN_29BIT_ID;
+
+            Channel.ClearMsgFilters();
+            var filterId = Channel.StartMsgFilter(passFilter);
+
+            _cts = new CancellationTokenSource(3000);
+
+            //Start background CAN monitor
+            _monitorThread = new Thread(() =>
+            {
+                while (!_cts.IsCancellationRequested && Channel != null && !Channel.IsDisposed)
+                {
+                    try
+                    {
+                        var resp = Channel?.GetMessages(200, 5);
+                        //Debug.WriteLine($"Received {resp.Messages.Length} messages at {DateTime.Now:HH:mm:ss.fff}");
+                        foreach (var msg in resp.Messages)
+                        {
+                            // Process immediately
+                            _isoTpParser.ProcessMessage(msg.Data);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Error in Vehicle Tab: {ex.Message}");
+                        //StopListening();
+                    }
+                    Thread.Sleep(1);
+                }
+            })
+            { IsBackground = true };
+
+            _monitorThread.Start();
+
+            // Send VIN request
+            var vinRequest = new byte[12];
+            if (BitMode == BitType.BITS_11)
+            {
+                vinRequest[0] = 0x00; // OBD2 Mode 09 PID 02
+                vinRequest[1] = 0x00; // OBD2 Mode 09 PID 02
+                vinRequest[2] = 0x07; // PID 02
+                vinRequest[3] = 0xE0; // VIN request
+            }
+            else
+            {
+                vinRequest[0] = 0x14; // UDS Service 22, Sub-function F1 (VIN)
+                vinRequest[1] = 0xDA; // UDS Service 22, Sub-function F1 (VIN)
+                vinRequest[2] = 0x11; // Service ID for VIN
+                vinRequest[3] = 0xF1; // Sub-function for VIN
+            }
+            vinRequest[4] = 0x02;
+            vinRequest[5] = 0x09;
+            vinRequest[6] = 0x02;
+            Channel.SendMessage(vinRequest);
+            Thread.Sleep(2); // Give some time for the request to be sent
+
+            _monitorThread.Join(3000); // Wait for thread to complete
+            Channel.StopMsgFilter(filterId);
+            Channel.ClearMsgFilters();
         }
 
         public void SendFlowControl(byte[] canId, int blockSize = 0, int separationTime = 0)
@@ -184,7 +196,7 @@ namespace J2534Diag
                         blockSize: 0,
                         separationTime: 2
                     );
-                    Thread.Sleep(10);
+                    Thread.Sleep(2);
 
                     // Print partial VIN for debugging
                     Vin = ExtractPartialVin(e.Payload);
