@@ -66,6 +66,11 @@ namespace J2534Diag
                     // Only allow 1 retry here
                     InitializeChannel(dllFileName);
                 }
+                //Don't let it switch biut modes if we got a response
+                if(!string.IsNullOrEmpty(Vin))
+                {
+                    return;
+                }
             }
         }
 
