@@ -28,13 +28,14 @@ namespace J2534Diag
         private IsoTpParser _isoTpParser;
         private Thread _monitorThread;
         private CancellationTokenSource _cts;
-
-        public J2534Manager()
+        private MainForm _mainForm;
+        public J2534Manager(MainForm mainForm)
         {
             // Initialize J2534Manager here with your preferred DLL and settings
             Devices = APIFactory.GetAPIinfo().ToList();
             _isoTpParser = new IsoTpParser();
             _isoTpParser.FrameReceived += IsoTpParser_FrameReceived;
+            _mainForm = mainForm;
             //var vciApi = vciApis.First(x => x.Name == "SuperGoose-Plus");
             //Initialize(vciApi.Filename, Protocol.CAN, Baud.CAN_500000, ConnectFlag.NONE);
         }
@@ -249,12 +250,23 @@ namespace J2534Diag
 
         public void Dispose()
         {
+            Disconnect();
+        }
+
+        internal void Disconnect()
+        {
             Channel?.Dispose();
             Device?.Dispose();
             Api?.Dispose();
+
             Channel = null;
             Device = null;
             Api = null;
+            Vin = null;
+
+            _mainForm.UpdateSelectedVehicle(false, null);
+
+
         }
     }
 }

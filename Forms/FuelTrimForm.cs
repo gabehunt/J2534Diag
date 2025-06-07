@@ -150,117 +150,124 @@ namespace J2534Diag
         private void StartApiAndThreads()
         {
             _cts = new CancellationTokenSource();
-
-            if (j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
-
-            // Set up filters, etc.
-            MessageFilter passFilter = j2534Manager.BitMode == BitType.BITS_11 ? new MessageFilter()
+            try
             {
-                FilterType = Filter.PASS_FILTER,
-                Mask = new byte[] { 0xF0, 0xFF, 0xFF, 0x00 },
-                Pattern = new byte[] { 0x00, 0x00, 0x07, 0xD0 },
-                FlowControl = new byte[] { 0x00, 0x00, 0x07, 0xE0 },
-                TxFlags = TxFlag.NONE
-            } : new MessageFilter()
-            {
-                FilterType = Filter.PASS_FILTER,
-                Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF },
-                Pattern = new byte[] { 0x14, 0x2A, 0xF1, 0x11 },
-                FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
-                TxFlags = TxFlag.CAN_29BIT_ID
-            };
+                if (j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
 
-
-            MessageFilter passFilter2 = new MessageFilter()
-            {
-                FilterType = Filter.PASS_FILTER,
-                Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF },
-                Pattern = new byte[] { 0x14, 0x2C, 0xF1, 0x11 },
-                FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
-                TxFlags = TxFlag.CAN_29BIT_ID
-            };
-
-            MessageFilter passFilter3 = new MessageFilter()
-            {
-                FilterType = Filter.PASS_FILTER,
-                Mask = new byte[] { 0x00, 0x00, 0x00, 0x00 },
-                Pattern = new byte[] { 0x18, 0x2C, 0xF1, 0x11 },
-                FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
-                TxFlags = TxFlag.CAN_29BIT_ID
-            };
-
-            j2534Manager.Channel.DefaultTxFlag = j2534Manager.BitMode == BitType.BITS_11 ? TxFlag.NONE : TxFlag.CAN_29BIT_ID;
-            j2534Manager.Channel.ClearMsgFilters();
-            j2534Manager.Channel.StartMsgFilter(passFilter);
-            if(j2534Manager.BitMode == BitType.BITS_29)
-            {
-                j2534Manager.Channel.StartMsgFilter(passFilter2);
-                j2534Manager.Channel.StartMsgFilter(passFilter3);
-            }
-
-            //Start background CAN monitor
-            _monitorThread = new Thread(() =>
-            {
-                while (!_cts.IsCancellationRequested && j2534Manager.Channel != null && !j2534Manager.Channel.IsDisposed)
+                // Set up filters, etc.
+                MessageFilter passFilter = j2534Manager.BitMode == BitType.BITS_11 ? new MessageFilter()
                 {
-                    try
-                    {
-                        var resp = j2534Manager?.Channel?.GetMessages(200, 2);
-                        //Debug.WriteLine($"Received {resp.Messages.Length} messages at {DateTime.Now:HH:mm:ss.fff}");
-                        foreach (var msg in resp.Messages)
-                        {
-                            if(_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed)
-                            {
-                                return;
-                            }
-                            // Process immediately
-                            ParseIsoTpMessage(msg.Data, j2534Manager.Channel);
-                        }
-                    }
-                    catch
-                    {
-                        return;
-                    }
-                    Thread.Sleep(1);
+                    FilterType = Filter.PASS_FILTER,
+                    Mask = new byte[] { 0xF0, 0xFF, 0xFF, 0x00 },
+                    Pattern = new byte[] { 0x00, 0x00, 0x07, 0xD0 },
+                    FlowControl = new byte[] { 0x00, 0x00, 0x07, 0xE0 },
+                    TxFlags = TxFlag.NONE
+                } : new MessageFilter()
+                {
+                    FilterType = Filter.PASS_FILTER,
+                    Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF },
+                    Pattern = new byte[] { 0x14, 0x2A, 0xF1, 0x11 },
+                    FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
+                    TxFlags = TxFlag.CAN_29BIT_ID
+                };
+
+
+                MessageFilter passFilter2 = new MessageFilter()
+                {
+                    FilterType = Filter.PASS_FILTER,
+                    Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF },
+                    Pattern = new byte[] { 0x14, 0x2C, 0xF1, 0x11 },
+                    FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
+                    TxFlags = TxFlag.CAN_29BIT_ID
+                };
+
+                MessageFilter passFilter3 = new MessageFilter()
+                {
+                    FilterType = Filter.PASS_FILTER,
+                    Mask = new byte[] { 0x00, 0x00, 0x00, 0x00 },
+                    Pattern = new byte[] { 0x18, 0x2C, 0xF1, 0x11 },
+                    FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
+                    TxFlags = TxFlag.CAN_29BIT_ID
+                };
+
+                j2534Manager.Channel.DefaultTxFlag = j2534Manager.BitMode == BitType.BITS_11 ? TxFlag.NONE : TxFlag.CAN_29BIT_ID;
+                j2534Manager.Channel.ClearMsgFilters();
+                j2534Manager.Channel.StartMsgFilter(passFilter);
+                if (j2534Manager.BitMode == BitType.BITS_29)
+                {
+                    j2534Manager.Channel.StartMsgFilter(passFilter2);
+                    j2534Manager.Channel.StartMsgFilter(passFilter3);
                 }
-            })
-            { IsBackground = true };
-            _monitorThread.Start();
 
-            // Start polling thread
-            _pollingThread = new Thread(() =>
-            {
- 
-                while (!_cts.IsCancellationRequested && j2534Manager.Channel != null && !j2534Manager.Channel.IsDisposed)
+                //Start background CAN monitor
+                _monitorThread = new Thread(() =>
                 {
-                    //if (j2534Manager.BitMode == BitType.BITS_11)
-                    //{
-                    foreach (var pid in ObdPids.Where(p => p.Enabled))
+                    while (!_cts.IsCancellationRequested && j2534Manager.Channel != null && !j2534Manager.Channel.IsDisposed)
                     {
-                        if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed)
-                        {
-                            break;
-                        }
-                        var request = BuildObdPidRequest(pid, j2534Manager.BitMode);
-                        if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
                         try
                         {
-                            Debug.WriteLine($"Sending OBD PID request: {BitConverter.ToString(request)} (Time: {DateTime.Now:HH:mm:ss.fff})");
-                            j2534Manager.Channel.SendMessage(request);
+                            var resp = j2534Manager?.Channel?.GetMessages(200, 2);
+                            //Debug.WriteLine($"Received {resp.Messages.Length} messages at {DateTime.Now:HH:mm:ss.fff}");
+                            foreach (var msg in resp.Messages)
+                            {
+                                if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed)
+                                {
+                                    return;
+                                }
+                                // Process immediately
+                                ParseIsoTpMessage(msg.Data, j2534Manager.Channel);
+                            }
                         }
-                        catch (J2534Exception ex)
+                        catch
                         {
-                            Debug.WriteLine($"Error sending message: {ex.Message}");
                             return;
                         }
-                        Thread.Sleep(2);
+                        Thread.Sleep(1);
                     }
-                    Thread.Sleep(5);
+                })
+                { IsBackground = true };
+                _monitorThread.Start();
 
-                }
-            })
-            { IsBackground = true };
-            _pollingThread.Start();
+                // Start polling thread
+                _pollingThread = new Thread(() =>
+                {
+
+                    while (!_cts.IsCancellationRequested && j2534Manager.Channel != null && !j2534Manager.Channel.IsDisposed)
+                    {
+                        //if (j2534Manager.BitMode == BitType.BITS_11)
+                        //{
+                        foreach (var pid in ObdPids.Where(p => p.Enabled))
+                        {
+                            if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed)
+                            {
+                                break;
+                            }
+                            var request = BuildObdPidRequest(pid, j2534Manager.BitMode);
+                            if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
+                            try
+                            {
+                                Debug.WriteLine($"Sending OBD PID request: {BitConverter.ToString(request)} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                                j2534Manager.Channel.SendMessage(request);
+                            }
+                            catch (J2534Exception ex)
+                            {
+                                Debug.WriteLine($"Error sending message: {ex.Message}");
+                                return;
+                            }
+                            Thread.Sleep(2);
+                        }
+                        Thread.Sleep(5);
+
+                    }
+                })
+                { IsBackground = true };
+                _pollingThread.Start();
+            }
+            catch (J2534Exception ex)
+            {
+                Debug.WriteLine($"Error starting API and threads: {ex.Message}");
+                j2534Manager.Disconnect();
+            }
         }
 
         private IEnumerable<byte> BuildUdsPidRequest(UdsPid pid)
@@ -579,7 +586,6 @@ namespace J2534Diag
         {
             if (_monitorThread == null || !_monitorThread.IsAlive)
             {
-                _cts = new CancellationTokenSource();
                 StartApiAndThreads();
             }
         }
