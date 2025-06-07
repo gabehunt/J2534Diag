@@ -37,9 +37,6 @@ namespace J2534Diag
                 this.pictureBox1.Image = Image.FromStream(ms);
             }
 
-            cbDevices.Items.AddRange(j2534Manager.Devices.Select(api => api.Name).ToArray());
-            cbDevices.SelectedIndex = 0;
-
             // Start everything after the form is loaded
             this.Load += Form1_Load;
             this.FormClosing += VehicleTabForm_FormClosing;
@@ -50,6 +47,16 @@ namespace J2534Diag
 
         private void Form1_Load(object sender, EventArgs e)
         {
+            if (j2534Manager?.Devices?.Any() == true)
+            {
+                cbDevices.Items.AddRange(j2534Manager.Devices.Select(api => api.Name).ToArray());
+                cbDevices.SelectedIndex = 0;
+            }
+            else
+            {
+                cbDevices.Items.Add("No J2534 devices found");
+                btnConnect.Enabled = false;
+            }
         }
 
         private void VehicleTabForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -98,6 +105,12 @@ namespace J2534Diag
                 btnConnect.Enabled = false;
                 btnConnect.Text = "Connecting ...";
                 Application.DoEvents();
+
+                if(j2534Manager?.Devices?.Any() != true)
+                {
+                    MessageBox.Show("No J2534 devices found. Please install J2534 device drivers and try again.", "No Devices Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
 
                 var selectedApi = j2534Manager.Devices[cbDevices.SelectedIndex];
                 j2534Manager.Initialize(selectedApi.Filename);
