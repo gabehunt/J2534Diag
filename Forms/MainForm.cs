@@ -20,22 +20,6 @@ namespace J2534Diag
         public MainForm()
         {
             InitializeComponent();
-
-            j2534Manager = new J2534Manager(this);
-
-            vehicleTabForm = new VehicleTabForm(this, j2534Manager) { TopLevel = false, Dock = DockStyle.Fill, FormBorderStyle = FormBorderStyle.None };
-            fuelTrimForm = new FuelTrimForm(j2534Manager) { TopLevel = false, Dock = DockStyle.Fill, FormBorderStyle = FormBorderStyle.None };
-            canListenerForm = new CanListenerForm(j2534Manager) { TopLevel = false, Dock = DockStyle.Fill, FormBorderStyle = FormBorderStyle.None };
-            misfireForm = new MisfireForm(j2534Manager) { TopLevel = false, Dock = DockStyle.Fill, FormBorderStyle = FormBorderStyle.None };
-            tabControl1.TabPages["tabVehicle"].Controls.Add(vehicleTabForm);
-            tabControl1.TabPages["tabFuelTrim"].Controls.Add(fuelTrimForm);
-            tabControl1.TabPages["tabCanListener"].Controls.Add(canListenerForm);
-            tabControl1.TabPages["tabMisfireMonitor"].Controls.Add(misfireForm);
-
-            vehicleTabForm.Show();
-            fuelTrimForm.Show();
-            canListenerForm.Show();
-            misfireForm.Show();
         }
 
         public void UpdateSelectedVehicle(bool connected, string vin)
@@ -101,12 +85,45 @@ namespace J2534Diag
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+
+            try
+            {
+                j2534Manager = new J2534Manager(this);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to initialize J2534 Manager: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            try
+            {
+                vehicleTabForm = new VehicleTabForm(this, j2534Manager) { TopLevel = false, Dock = DockStyle.Fill, FormBorderStyle = FormBorderStyle.None };
+                fuelTrimForm = new FuelTrimForm(j2534Manager) { TopLevel = false, Dock = DockStyle.Fill, FormBorderStyle = FormBorderStyle.None };
+                canListenerForm = new CanListenerForm(j2534Manager) { TopLevel = false, Dock = DockStyle.Fill, FormBorderStyle = FormBorderStyle.None };
+                misfireForm = new MisfireForm(j2534Manager) { TopLevel = false, Dock = DockStyle.Fill, FormBorderStyle = FormBorderStyle.None };
+                tabControl1.TabPages["tabVehicle"].Controls.Add(vehicleTabForm);
+                tabControl1.TabPages["tabFuelTrim"].Controls.Add(fuelTrimForm);
+                tabControl1.TabPages["tabCanListener"].Controls.Add(canListenerForm);
+                tabControl1.TabPages["tabMisfireMonitor"].Controls.Add(misfireForm);
+
+                vehicleTabForm.Show();
+                fuelTrimForm.Show();
+                canListenerForm.Show();
+                misfireForm.Show();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to initialize Program: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             base.OnFormClosing(e);
-            j2534Manager.Dispose();
+            j2534Manager?.Dispose();
         }
 
         private void tabControl1_SelectedIndexChanged(object sender, EventArgs e)
