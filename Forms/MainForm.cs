@@ -21,7 +21,7 @@ namespace J2534Diag
         {
             InitializeComponent();
 
-            j2534Manager = new J2534Manager();
+            j2534Manager = new J2534Manager(this);
 
             vehicleTabForm = new VehicleTabForm(this, j2534Manager) { TopLevel = false, Dock = DockStyle.Fill, FormBorderStyle = FormBorderStyle.None };
             fuelTrimForm = new FuelTrimForm(j2534Manager) { TopLevel = false, Dock = DockStyle.Fill, FormBorderStyle = FormBorderStyle.None };
