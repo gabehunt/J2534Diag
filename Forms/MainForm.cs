@@ -30,55 +30,67 @@ namespace J2534Diag
                 return;
             }
 
+            if (!connected)
+            {
+                //TODO CLEANUP ALERT
+                MessageBox.Show("Vehicle not connected.");
+                return;
+            }
+
+            if(vin == null)
+            {
+                //TODO CLEANUP ALERT
+                MessageBox.Show("VIN Not detected via OBDII.");
+                return;
+            }
+
             var sb = new StringBuilder();
 
-            if (connected && vin.Length == 17)
+            var vehicle = VinDecoder.DecodeVin(vin);
+            var space = " ";
+
+            var sbEngine = new StringBuilder();
+            if (!string.IsNullOrEmpty(vehicle.EngineCylinders))
             {
-                var vehicle = VinDecoder.DecodeVin(vin);
-                var space = " ";
-
-                var sbEngine = new StringBuilder();
-                if (!string.IsNullOrEmpty(vehicle.EngineCylinders))
-                {
-                    sbEngine.Append(vehicle.EngineCylinders).Append(" Cyl, ");
-                }
-
-                if (!string.IsNullOrEmpty(vehicle.DisplacementL))
-                {
-                    sbEngine.Append(vehicle.DisplacementL).Append(" L, ");
-                }
-
-                if (!string.IsNullOrEmpty(vehicle.EngineHP))
-                {
-                    sbEngine.Append(vehicle.EngineHP).Append(" HP, ");
-                }
-
-
-                if (!string.IsNullOrEmpty(vehicle.ModelYear))
-                {
-                    sb.Append(vehicle.ModelYear).Append(space);
-                }
-
-                if (!string.IsNullOrEmpty(vehicle.Make))
-                {
-                    sb.Append(vehicle.Make).Append(space);
-                }
-
-                if (!string.IsNullOrEmpty(vehicle.Model))
-                {
-                    sb.Append(vehicle.Model).Append(space);
-                }
-
-                if (!string.IsNullOrEmpty(vehicle.Series))
-                {
-                    sb.Append(vehicle.Series).Append(space);
-                }
-
-                if (sbEngine.Length > 0)
-                {
-                    sb.Append(" (").Append(sbEngine.ToString().TrimEnd(new char[] { ',', ' '})).Append(")");
-                }
+                sbEngine.Append(vehicle.EngineCylinders).Append(" Cyl, ");
             }
+
+            if (!string.IsNullOrEmpty(vehicle.DisplacementL))
+            {
+                sbEngine.Append(vehicle.DisplacementL).Append(" L, ");
+            }
+
+            if (!string.IsNullOrEmpty(vehicle.EngineHP))
+            {
+                sbEngine.Append(vehicle.EngineHP).Append(" HP, ");
+            }
+
+
+            if (!string.IsNullOrEmpty(vehicle.ModelYear))
+            {
+                sb.Append(vehicle.ModelYear).Append(space);
+            }
+
+            if (!string.IsNullOrEmpty(vehicle.Make))
+            {
+                sb.Append(vehicle.Make).Append(space);
+            }
+
+            if (!string.IsNullOrEmpty(vehicle.Model))
+            {
+                sb.Append(vehicle.Model).Append(space);
+            }
+
+            if (!string.IsNullOrEmpty(vehicle.Series))
+            {
+                sb.Append(vehicle.Series).Append(space);
+            }
+
+            if (sbEngine.Length > 0)
+            {
+                sb.Append(" (").Append(sbEngine.ToString().TrimEnd(new char[] { ',', ' '})).Append(")");
+            }
+
             selectedVehicleControl.SetVehicle(connected, vin, sb.ToString());
         }
 

@@ -29,6 +29,8 @@ namespace J2534Diag
         private bool useImperialUnits = true; // Set to true for imperial, false for metric
         private ConcurrentDictionary<byte, PidDisplayControl> _pidControls = new ConcurrentDictionary<byte, PidDisplayControl>();
         readonly List<ObdPid> ObdPids;
+        readonly List<UdsPid> UdsPids;
+        private readonly Dictionary<byte, UdsPid> _udsPidsByDidLowByte;
 
         // ISO-TP reassembly state
         List<byte> isotpBuffer = new List<byte>();
@@ -61,6 +63,8 @@ namespace J2534Diag
             SetupGrids();
 
             ObdPids = ObdPidMap.GetObdPids(useImperialUnits);
+            UdsPids = UdsPidMap.GetUdsPids(useImperialUnits);
+            _udsPidsByDidLowByte = UdsPids.ToDictionary(pid => pid.DidLowByte);
             SetupPidDisplayControls();
             UpdateTrimGridDisplay();
 
@@ -154,6 +158,8 @@ namespace J2534Diag
             {
                 if (j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
 
+                bool useUdsLiveData = j2534Manager.VinMode == VinRequestMode.UdsJ1979_2;
+
                 // Set up filters, etc.
                 MessageFilter passFilter = j2534Manager.BitMode == BitType.BITS_11 ? new MessageFilter()
                 {
@@ -165,27 +171,8 @@ namespace J2534Diag
                 } : new MessageFilter()
                 {
                     FilterType = Filter.PASS_FILTER,
-                    Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF },
-                    Pattern = new byte[] { 0x14, 0x2A, 0xF1, 0x11 },
-                    FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
-                    TxFlags = TxFlag.CAN_29BIT_ID
-                };
-
-
-                MessageFilter passFilter2 = new MessageFilter()
-                {
-                    FilterType = Filter.PASS_FILTER,
-                    Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0xFF },
-                    Pattern = new byte[] { 0x14, 0x2C, 0xF1, 0x11 },
-                    FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
-                    TxFlags = TxFlag.CAN_29BIT_ID
-                };
-
-                MessageFilter passFilter3 = new MessageFilter()
-                {
-                    FilterType = Filter.PASS_FILTER,
-                    Mask = new byte[] { 0x00, 0x00, 0x00, 0x00 },
-                    Pattern = new byte[] { 0x18, 0x2C, 0xF1, 0x11 },
+                    Mask = new byte[] { 0xFF, 0xFF, 0xFF, 0x00 },
+                    Pattern = new byte[] { 0x18, 0xDA, 0xF1, 0x00 },
                     FlowControl = new byte[] { 0x00, 0x00, 0x00, 0x00 },
                     TxFlags = TxFlag.CAN_29BIT_ID
                 };
@@ -193,11 +180,6 @@ namespace J2534Diag
                 j2534Manager.Channel.DefaultTxFlag = j2534Manager.BitMode == BitType.BITS_11 ? TxFlag.NONE : TxFlag.CAN_29BIT_ID;
                 j2534Manager.Channel.ClearMsgFilters();
                 j2534Manager.Channel.StartMsgFilter(passFilter);
-                if (j2534Manager.BitMode == BitType.BITS_29)
-                {
-                    j2534Manager.Channel.StartMsgFilter(passFilter2);
-                    j2534Manager.Channel.StartMsgFilter(passFilter3);
-                }
 
                 //Start background CAN monitor
                 _monitorThread = new Thread(() =>
@@ -234,29 +216,55 @@ namespace J2534Diag
 
                     while (!_cts.IsCancellationRequested && j2534Manager.Channel != null && !j2534Manager.Channel.IsDisposed)
                     {
-                        //if (j2534Manager.BitMode == BitType.BITS_11)
-                        //{
-                        foreach (var pid in ObdPids.Where(p => p.Enabled))
+                        if (useUdsLiveData)
                         {
-                            if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed)
+                            foreach (var pid in UdsPids.Where(p => p.Enabled))
                             {
-                                break;
+                                if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed)
+                                {
+                                    break;
+                                }
+
+                                var request = BuildUdsPidRequest(pid, j2534Manager.BitMode);
+                                if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
+                                try
+                                {
+                                    Debug.WriteLine($"Sending UDS DID request: {BitConverter.ToString(request)} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                                    j2534Manager.Channel.SendMessage(request);
+                                }
+                                catch (J2534Exception ex)
+                                {
+                                    Debug.WriteLine($"Error sending message: {ex.Message}");
+                                    return;
+                                }
+                                Thread.Sleep(2);
                             }
-                            var request = BuildObdPidRequest(pid, j2534Manager.BitMode);
-                            if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
-                            try
-                            {
-                                Debug.WriteLine($"Sending OBD PID request: {BitConverter.ToString(request)} (Time: {DateTime.Now:HH:mm:ss.fff})");
-                                j2534Manager.Channel.SendMessage(request);
-                            }
-                            catch (J2534Exception ex)
-                            {
-                                Debug.WriteLine($"Error sending message: {ex.Message}");
-                                return;
-                            }
-                            Thread.Sleep(2);
                         }
-                        Thread.Sleep(5);
+                        else
+                        {
+                            foreach (var pid in ObdPids.Where(p => p.Enabled))
+                            {
+                                if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed)
+                                {
+                                    break;
+                                }
+                                var request = BuildObdPidRequest(pid, j2534Manager.BitMode);
+                                if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
+                                try
+                                {
+                                    Debug.WriteLine($"Sending OBD PID request: {BitConverter.ToString(request)} (Time: {DateTime.Now:HH:mm:ss.fff})");
+                                    j2534Manager.Channel.SendMessage(request);
+                                }
+                                catch (J2534Exception ex)
+                                {
+                                    Debug.WriteLine($"Error sending message: {ex.Message}");
+                                    return;
+                                }
+                                Thread.Sleep(2);
+                            }
+                        }
+
+                        Thread.Sleep(useUdsLiveData ? 10 : 5);
 
                     }
                 })
@@ -270,18 +278,27 @@ namespace J2534Diag
             }
         }
 
-        private IEnumerable<byte> BuildUdsPidRequest(UdsPid pid)
+        private byte[] BuildUdsPidRequest(UdsPid pid, BitType bitMode)
         {
-            // 4 bytes ArbId, 1 byte Sid, 1 byte Mode, 1 byte Pid, pad with 0x00 to 12 bytes
             var request = new byte[12];
-            Array.Copy(pid.ArbId, 0, request, 0, 4);
+
+            if (bitMode == BitType.BITS_11)
+            {
+                request[0] = 0x00;
+                request[1] = 0x00;
+                request[2] = 0x07;
+                request[3] = 0xDF;
+            }
+            else
+            {
+                Array.Copy(pid.ArbId, 0, request, 0, 4);
+            }
+
             request[4] = pid.Length;
             request[5] = pid.Service;
             request[6] = pid.DidHighByte;
             request[7] = pid.DidLowByte;
-            // The rest (request[7]..request[11]) are already 0x00 by default
             return request;
-
         }
 
         void ParseIsoTpMessage(byte[] data, Channel channel)
@@ -313,7 +330,7 @@ namespace J2534Diag
                         if (payload.Length >= 1 + sfLen)
                         {
                             var msg = payload.Skip(1).Take(sfLen).ToArray();
-                            TryPrintObdPidValue(msg);
+                            TryPrintPidValue(msg);
                         }
                         //else
                         //Console.WriteLine("Single Frame: Payload too short");
@@ -349,7 +366,7 @@ namespace J2534Diag
                             {
                                 isotpCollecting = false;
                                 var msg = isotpBuffer.Take(isotpExpectedLength).ToArray();
-                                TryPrintObdPidValue(msg);
+                                TryPrintPidValue(msg);
                             }
                         }
                         break;
@@ -363,15 +380,46 @@ namespace J2534Diag
 
         void SendFlowControl(byte[] canId, Channel channel, int blockSize = 0, int separationTime = 0)
         {
-            var fc = new byte[] { 0x00, 0x00, 0x07, 0xE0,
-            0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+            var fc = new byte[12];
+
+            if (j2534Manager.BitMode == BitType.BITS_11)
+            {
+                fc[0] = canId[0];
+                fc[1] = canId[1];
+                fc[2] = canId[2];
+                fc[3] = (byte)(canId[3] - 0x08);
+            }
+            else
+            {
+                fc[0] = canId[0];
+                fc[1] = canId[1];
+                fc[2] = canId[3];
+                fc[3] = canId[2];
+            }
+
+            fc[4] = 0x30;
             channel.SendMessage(fc);
+        }
+
+        private void TryPrintPidValue(byte[] payload)
+        {
+            if (payload.Length < 2) return;
+
+            if (payload[0] == 0x41)
+            {
+                TryPrintObdPidValue(payload);
+                return;
+            }
+
+            if (payload.Length >= 4 && payload[0] == 0x62 && payload[1] == 0xF4)
+            {
+                TryPrintUdsPidValue(payload);
+            }
         }
 
         private void TryPrintObdPidValue(byte[] payload)
         {
-            if (payload.Length < 2) return;
-            if (payload[0] != 0x41) return; // Only Mode 01 responses
+            if (payload.Length < 2 || payload[0] != 0x41) return;
 
             byte pid = payload[1];
             var pidDef = ObdPids.FirstOrDefault(p => p.Pid == pid);
@@ -379,45 +427,21 @@ namespace J2534Diag
             {
                 var data = payload.Skip(2).ToArray();
                 double value = pidDef.Formula(data);
-                UpdatePidDisplay(pid, value, pidDef.Unit);
-
-                switch (pid)
-                {
-                    case 0x11: // Throttle Position
-                        lastThrottle = value;
-                        break;
-                    case 0x0C: // Engine RPM
-                        lastRpm = value;
-                        break;
-                    case 0x06: // STFT Bank 1
-                        lastStft1 = value;
-                        break;
-                    case 0x07: // LTFT Bank 1
-                        lastLtft1 = value;
-                        break;
-                    case 0x08: // STFT Bank 2
-                        lastStft2 = value;
-                        break;
-                    case 0x09: // LTFT Bank 2
-                        lastLtft2 = value;
-                        break;
-                }
-
-                // Update Bank 1 grid
-                if (lastThrottle >= 0 && lastRpm >= 0)
-                {
-                    int tBin = Math.Min((int)(lastThrottle / 10.0), ThrottleBins - 1);
-                    int rBin = Math.Min((int)(lastRpm / 500.0), RpmBins - 1);
-
-                    double totalTrim1 = lastStft1 + lastLtft1;
-                    trimGridBank1[tBin, rBin] = totalTrim1;
-
-                    double totalTrim2 = lastStft2 + lastLtft2;
-                    trimGridBank2[tBin, rBin] = totalTrim2;
-
-                    UpdateTrimGridDisplay();
-                }
+                UpdateLiveData(pid, value, pidDef.Unit);
             }
+        }
+
+        private void TryPrintUdsPidValue(byte[] payload)
+        {
+            byte didLowByte = payload[2];
+            if (!_udsPidsByDidLowByte.TryGetValue(didLowByte, out var pidDef))
+            {
+                return;
+            }
+
+            var data = payload.Skip(3).ToArray();
+            double value = pidDef.Formula(data);
+            UpdateLiveData(didLowByte, value, pidDef.Unit);
         }
 
         byte[] BuildObdPidRequest(ObdPid pid, BitType bitMode)
@@ -440,6 +464,47 @@ namespace J2534Diag
             request[6] = pid.Pid;
             // The rest (request[7]..request[11]) are already 0x00 by default
             return request;
+        }
+
+        private void UpdateLiveData(byte pid, double value, string unit)
+        {
+            UpdatePidDisplay(pid, value, unit);
+
+            switch (pid)
+            {
+                case 0x11:
+                    lastThrottle = value;
+                    break;
+                case 0x0C:
+                    lastRpm = value;
+                    break;
+                case 0x06:
+                    lastStft1 = value;
+                    break;
+                case 0x07:
+                    lastLtft1 = value;
+                    break;
+                case 0x08:
+                    lastStft2 = value;
+                    break;
+                case 0x09:
+                    lastLtft2 = value;
+                    break;
+            }
+
+            if (lastThrottle >= 0 && lastRpm >= 0)
+            {
+                int tBin = Math.Min((int)(lastThrottle / 10.0), ThrottleBins - 1);
+                int rBin = Math.Min((int)(lastRpm / 500.0), RpmBins - 1);
+
+                double totalTrim1 = lastStft1 + lastLtft1;
+                trimGridBank1[tBin, rBin] = totalTrim1;
+
+                double totalTrim2 = lastStft2 + lastLtft2;
+                trimGridBank2[tBin, rBin] = totalTrim2;
+
+                UpdateTrimGridDisplay();
+            }
         }
 
         private void UpdatePidDisplay(byte pid, double value, string unit)
