@@ -33,14 +33,14 @@ namespace J2534Diag
             if (!connected)
             {
                 //TODO CLEANUP ALERT
-                MessageBox.Show("Vehicle not connected.");
+                //MessageBox.Show("Vehicle not connected.");
                 return;
             }
 
             if(vin == null)
             {
                 //TODO CLEANUP ALERT
-                MessageBox.Show("VIN Not detected via OBDII.");
+                //MessageBox.Show("VIN Not detected via OBDII.");
                 return;
             }
 

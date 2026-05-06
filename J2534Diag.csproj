@@ -153,6 +153,7 @@
     <Content Include="Assets\J2534Diag.png" />
     <Content Include="Assets\j2534diag_icon.ico" />
     <Content Include="Other.txt" />
+    <Content Include="TextFile1.txt" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

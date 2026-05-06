@@ -18,6 +18,12 @@ namespace J2534Diag
 {
     public partial class FuelTrimForm : Form
     {
+        private enum LiveDataProtocol
+        {
+            Auto,
+            Obd,
+            Uds
+        }
 
         public struct MSG
         {
@@ -53,6 +59,10 @@ namespace J2534Diag
         private double lastRpm = 0;
         private double lastStft1 = 0, lastLtft1 = 0;
         private double lastStft2 = 0, lastLtft2 = 0;
+        private DateTime _liveDataProtocolWindowStart = DateTime.MinValue;
+        private DateTime _lastObdResponseTime = DateTime.MinValue;
+        private DateTime _lastUdsResponseTime = DateTime.MinValue;
+        private readonly TimeSpan _liveDataProtocolProbeWindow = TimeSpan.FromMilliseconds(1500);
 
         public bool BatchMode { get; private set; } = false;
 
@@ -154,11 +164,13 @@ namespace J2534Diag
         private void StartApiAndThreads()
         {
             _cts = new CancellationTokenSource();
+            _liveDataProtocolWindowStart = DateTime.UtcNow;
+            _lastObdResponseTime = DateTime.MinValue;
+            _lastUdsResponseTime = DateTime.MinValue;
+
             try
             {
                 if (j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
-
-                bool useUdsLiveData = j2534Manager.VinMode == VinRequestMode.UdsJ1979_2;
 
                 // Set up filters, etc.
                 MessageFilter passFilter = j2534Manager.BitMode == BitType.BITS_11 ? new MessageFilter()
@@ -216,7 +228,8 @@ namespace J2534Diag
 
                     while (!_cts.IsCancellationRequested && j2534Manager.Channel != null && !j2534Manager.Channel.IsDisposed)
                     {
-                        if (useUdsLiveData)
+                        var protocol = GetLiveDataProtocolToPoll();
+                        if (protocol == LiveDataProtocol.Uds)
                         {
                             foreach (var pid in UdsPids.Where(p => p.Enabled))
                             {
@@ -248,6 +261,7 @@ namespace J2534Diag
                                 {
                                     break;
                                 }
+
                                 var request = BuildObdPidRequest(pid, j2534Manager.BitMode);
                                 if (_cts.IsCancellationRequested || j2534Manager.Channel == null || j2534Manager.Channel.IsDisposed) return;
                                 try
@@ -264,7 +278,7 @@ namespace J2534Diag
                             }
                         }
 
-                        Thread.Sleep(useUdsLiveData ? 10 : 5);
+                        Thread.Sleep(protocol == LiveDataProtocol.Uds ? 10 : 5);
 
                     }
                 })
@@ -401,18 +415,52 @@ namespace J2534Diag
             channel.SendMessage(fc);
         }
 
+        private LiveDataProtocol GetLiveDataProtocolToPoll()
+        {
+            if (_lastObdResponseTime != DateTime.MinValue)
+            {
+                return LiveDataProtocol.Obd;
+            }
+
+            if (_lastUdsResponseTime != DateTime.MinValue)
+            {
+                return LiveDataProtocol.Uds;
+            }
+
+            if (_liveDataProtocolWindowStart == DateTime.MinValue)
+            {
+                _liveDataProtocolWindowStart = DateTime.UtcNow;
+            }
+
+            var elapsed = DateTime.UtcNow - _liveDataProtocolWindowStart;
+            if (elapsed < _liveDataProtocolProbeWindow)
+            {
+                return LiveDataProtocol.Obd;
+            }
+
+            if (elapsed < _liveDataProtocolProbeWindow + _liveDataProtocolProbeWindow)
+            {
+                return LiveDataProtocol.Uds;
+            }
+
+            _liveDataProtocolWindowStart = DateTime.UtcNow;
+            return LiveDataProtocol.Obd;
+        }
+
         private void TryPrintPidValue(byte[] payload)
         {
             if (payload.Length < 2) return;
 
             if (payload[0] == 0x41)
             {
+                _lastObdResponseTime = DateTime.UtcNow;
                 TryPrintObdPidValue(payload);
                 return;
             }
 
             if (payload.Length >= 4 && payload[0] == 0x62 && payload[1] == 0xF4)
             {
+                _lastUdsResponseTime = DateTime.UtcNow;
                 TryPrintUdsPidValue(payload);
             }
         }
